@@ -69,17 +69,18 @@ WiFiClass WiFi(&SPI_3, PE0, PE1, PE8, PB13);
 
 /************************* WiFi Configuration *********************************/
 // Update these values according to your WiFi network
-#define WLAN_SSID       ""
-#define WLAN_PASS       ""
+#define WLAN_SSID       "your_wifi_ssid"
+#define WLAN_PASS       "your_wifi_password"
 
-/************************* Adafruit.io Setup *********************************/
+/************************* Adafruit.IO Setup *********************************/
 
 #define AIO_SERVER      "io.adafruit.com"
-#define AIO_SERVERPORT  1883            // use 8883 for SSL/TLS
-#define AIO_USERNAME    ""
-#define AIO_KEY         ""
+#define AIO_SERVERPORT  1883  // use 8883 and WiFiClientSecure (if supported) for SSL/TLS
+// Update the following values according to your Adafruit IO account
+#define AIO_USERNAME    "your_aio_username"
+#define AIO_KEY         "your_aio_key"
 
-/******************************* MQTT *************************************/
+/******************************* MQTT ****************************************/
 
 // Create a new object of WiFiClient class to connect to the MQTT server.
 WiFiClient client;
@@ -87,7 +88,7 @@ WiFiClient client;
 // Setup the MQTT client class by passing in the WiFi client and MQTT server and login details.
 Adafruit_MQTT_Client mqtt(&client, AIO_SERVER, AIO_SERVERPORT, AIO_USERNAME, AIO_KEY);
 
-/****************************** Feeds ***************************************/
+/****************************** Feeds ****************************************/
 
 // Notice MQTT paths for AIO follow the form: <username>/feeds/<feedname>
 // Setup a feed called 'hts221-temp' for publishing.
