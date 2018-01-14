@@ -1,5 +1,5 @@
 /* 
- *  QuakeSense_IoT_Node
+ *  QuakeSense_Node
  *  
  *  QuakeSense is an IoT project that aims to "sense" and monitor
  *  earthquakes through the measures provided by the LSM6DSL accelerometer

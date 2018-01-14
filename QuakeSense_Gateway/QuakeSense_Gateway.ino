@@ -283,7 +283,7 @@ void parseLoRaPacket(int packetSize) {
     #endif
       pgvaFeed.publish(tempData.toInt());
 
-      // full format earthquake aler message
+      // full format earthquake alert message
       if (data.indexOf("#LAT=") != -1) {
         startIndex = stopIndex + String("#DUR=").length();
         stopIndex = data.indexOf("#LAT=");
