@@ -65,15 +65,15 @@
 #include <SPI.h>
 #include <LoRa.h>
 
-// Change the values according to your implementation
+// Change these values according to your implementation
 #define GET_ENV_DATA  1
-#define PRINT_ENV_DATA 1
+#define PRINT_ENV_DATA 0
 #define SEND_ENV_DATA 1
 #define DEBUG_LORA_PACKET 1
 #define READ_GYRO 0
 #define PRINT_GYRO_DATA 0
-#define PRINT_ACC_DATA  1
-#define PRINT_GPS_DATA 1
+#define PRINT_ACC_DATA  0
+#define PRINT_GPS_DATA 0
 #define SERIAL_DEBUG  0
 
 #define DEV_I2C Wire
@@ -86,8 +86,8 @@ HardwareSerial GPSSerial(PA_12, PA_11);
 
 Adafruit_GPS GPS(&GPSSerial);
 
-// update gps data every 5 minutes (300000 millis)
-#define GPS_UPDATE_TIME 300000
+// update gps data every 15 seconds
+#define GPS_UPDATE_TIME 15000
 uint32_t gps_timer;
 bool isGPSDataValid = false;
 
@@ -103,7 +103,6 @@ byte destination = 0xBB;      // address of the receiver (LoRa gateway)
 
 bool loraInit = false;
 
-// Object that represents sensors
 #if GET_ENV_DATA == 1
 HTS221Sensor *HTS221_HumTemp;
 LPS22HBSensor *LPS22HB_Press;
@@ -137,6 +136,9 @@ uint32_t env_data_timer;
 
 // Maximum number of samples read by the accelerometer
 #define MAX_SAMPLES 128
+
+#define PGHAX_THRESHOLD 80
+#define PGHAY_THRESHOLD 80
 
 volatile uint32_t counter = 0;
 
@@ -276,7 +278,7 @@ void earthquake_detection() {
 
   for (n = 0; n < MAX_SAMPLES; n++) {
     LSM6DSL_AccGyro->Get_X_Axes(lsm6dsl_acc[n]);
-    if ( (abs(lsm6dsl_acc[n][LSM6DSL_X_AXIS]) > 80) || (abs(lsm6dsl_acc[n][LSM6DSL_Y_AXIS]) > 80) || (abs(lsm6dsl_acc[n][LSM6DSL_Z_AXIS]) > 1080) ) {
+    if ( (abs(lsm6dsl_acc[n][LSM6DSL_X_AXIS]) > PGHAX_THRESHOLD) || (abs(lsm6dsl_acc[n][LSM6DSL_Y_AXIS]) > PGHAY_THRESHOLD) ) {
       if (n == 0) {
         quake_start_time = millis();
       }
@@ -378,7 +380,7 @@ void earthquake_detection() {
         msg += "#TIME=";
         msg += (String(GPS.hour) + ":" + String(GPS.minute) +  ":" + String(GPS.seconds));
       }
-#ifdef DEBUG_LORA_PACKET
+#if DEBUG_LORA_PACKET == 1
       Serial.println("Lora packet sent:");
       Serial.println(msg);
 #endif
