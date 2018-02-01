@@ -175,7 +175,7 @@ void setup() {
 
   // Attempt to connect to Wifi network
   while (WiFi.status() != WL_CONNECTED) {
-    Serial.print("Attempting to connect to the network named: ");
+    Serial.print("Attempting to connect to the WiFi network ");
     Serial.println(WLAN_SSID);
 
     // Connect to WPA/WPA2 network.
@@ -462,6 +462,33 @@ void MQTT_connect() {
   SerialPort.println("Connected!");
 }
 
+void printEncryptionType(int thisType) {
+  // read the encryption type and print out the name:
+  switch (thisType) {
+    case ES_WIFI_SEC_OPEN:
+      Serial.println("OPEN");
+      break;
+    case ES_WIFI_SEC_WEP:
+      Serial.println("WEP");
+      break;
+    case ES_WIFI_SEC_WPA:
+      Serial.println("WPA");
+      break;
+    case ES_WIFI_SEC_WPA2:
+      Serial.println("WPA2");
+      break;
+    case ES_WIFI_SEC_WPA_WPA2:
+      Serial.println("WPA_WPA2");
+      break;
+     case ES_WIFI_SEC_WPA2_TKIP:
+      Serial.println("WPA_TKIP");
+      break;
+     case ES_WIFI_SEC_UNKNOWN:
+      Serial.println("UNKNOW");
+      break;
+  }
+}
+
 // Function that prints WiFi status and connection parameters.
 void printWifiStatus() {
   // print the SSID of the network you're connected to:
@@ -471,9 +498,13 @@ void printWifiStatus() {
   // print the BSSID of the network you're connected to:
   byte bssid[6];
   WiFi.BSSID(bssid);
+  
   Serial.print("BSSID: ");
   for (uint8_t i = 0; i < 6; i++) {
-    Serial.print(bssid[i], HEX);
+    if (bssid[5-i] < 0x10) {
+      Serial.print("0");
+    }
+    Serial.print(bssid[5-i], HEX);
     if (i != 5) {
       Serial.print(":");
     }
@@ -485,9 +516,13 @@ void printWifiStatus() {
   // print the MAC address of the WiFi module:
   byte macAddr[6];
   WiFi.macAddress(macAddr);
+  
   Serial.print("MAC Address: ");
   for (uint8_t i = 0; i < 6; i++) {
-    Serial.print(macAddr[i], HEX);
+    if (macAddr[5-i] < 0x10) {
+      Serial.print("0");
+    } 
+    Serial.print(macAddr[5-i], HEX);
     if (i != 5) {
       Serial.print(":");
     }
@@ -503,12 +538,17 @@ void printWifiStatus() {
 
   // print the subnet mask of the WiFi network you're connected to:
   IPAddress subMask = WiFi.subnetMask();
-  Serial.print("IP Address: ");
+  Serial.print("Subnet Mask: ");
   Serial.println(subMask);
 
   // print the received signal strength:
   long rssi = WiFi.RSSI();
-  Serial.print("Signal strength (RSSI):");
+  Serial.print("Signal strength (RSSI): ");
   Serial.print(rssi);
   Serial.println(" dBm");
+
+  // print encryption type:
+  Serial.print("Encryption type: ");
+  printEncryptionType(WiFi.encryptionType());
 }
+
