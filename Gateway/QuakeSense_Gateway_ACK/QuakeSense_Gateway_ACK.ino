@@ -501,10 +501,10 @@ void printWifiStatus() {
   
   Serial.print("BSSID: ");
   for (uint8_t i = 0; i < 6; i++) {
-    if (bssid[5-i] < 0x10) {
+    if (bssid[i] < 0x10) {
       Serial.print("0");
     }
-    Serial.print(bssid[5-i], HEX);
+    Serial.print(bssid[i], HEX);
     if (i != 5) {
       Serial.print(":");
     }
@@ -519,10 +519,10 @@ void printWifiStatus() {
   
   Serial.print("MAC Address: ");
   for (uint8_t i = 0; i < 6; i++) {
-    if (macAddr[5-i] < 0x10) {
+    if (macAddr[i] < 0x10) {
       Serial.print("0");
     } 
-    Serial.print(macAddr[5-i], HEX);
+    Serial.print(macAddr[i], HEX);
     if (i != 5) {
       Serial.print(":");
     }
