@@ -318,9 +318,9 @@ void earthquake_detection() {
   for (n = 0; n < MAX_SAMPLES; n++) {
     LSM6DSL_AccGyro->Get_X_Axes(lsm6dsl_acc[n]);
 
-    if ( (abs(lsm6dsl_acc[n][LSM6DSL_X_AXIS]) >= PGHAX_TRESHOLD) || \
-         (abs(lsm6dsl_acc[n][LSM6DSL_Y_AXIS]) >= PGHAY_TRESHOLD) || \
-         (abs(lsm6dsl_acc[n][LSM6DSL_Z_AXIS]) >= PGVA_TRESHOLD) ) {
+    if ( (abs(lsm6dsl_acc[n][LSM6DSL_X_AXIS]) >= PGHAX_THRESHOLD) || \
+         (abs(lsm6dsl_acc[n][LSM6DSL_Y_AXIS]) >= PGHAY_THRESHOLD) || \
+         (abs(lsm6dsl_acc[n][LSM6DSL_Z_AXIS]) >= PGVA_THRESHOLD) ) {
 
       if (n == 0) {
         quake_start_time = millis();
