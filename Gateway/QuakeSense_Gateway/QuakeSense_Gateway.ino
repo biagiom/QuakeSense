@@ -1,56 +1,68 @@
-/* 
+/*
  *  QuakeSense_Gateway
- *  
- *  QuakeSense is an IoT project that aims to "sense" and monitor
- *  earthquakes through the measures provided by the LSM6DSL accelerometer
- *  and a Lora network used to send alarms and environmental data.
- *  
+ * 
+ *  QuakeSense is an IoT project that aims to "sense" and monitor earthquakes through a Lora network.
+ * 
  *  The main elements of this project are:
- *  1) At least one sensor node consisting of:
- *     - a 3-axis accelerometer used to measure seismic waves result
- *       in the strong ground motion.
- *     - a LoRa radio module used to transmit an alarm and data.
- *       coming from the accelermoter to a single channel LoRa gateway
+ *  1) At least one Sensor Node (Mote) consisting of:
+ *     - a 3-axis accelerometer used to measure strong ground motion activity.
+ *     - a LoRa radio module used to transmit an alarm and the main parameters that
+ *       characterize the strong motion activity to a single channel LoRa gateway
  *     - A GPS module used to get altitude, longitude and latitude of
- *       the position of the seismic event.
- *     - a development board that is used to control the accelerometer, 
+ *       the area where the seismic event occurs.
+ *     - a development board that is used to control the accelerometer,
  *       the LoRa module and the GPS module.
  *     - a LiPo battery used to power the development board.
- *     
+ *     - a solar panel used to charge the LiPo battery.
+ *
  *     In this implementation, the sensor node has been made with:
- *     > LSM6DSL - 3D accelerometer and 3D gyroscope
+ *     > X-NUCLEO-IKS01A2 motion MEMS and environmental sensor expansion board including
+ *       * LSM6DSL: MEMS 3D accelerometer and 3D gyroscope
+ *       * LSM303AGR: MEMS 3D accelerometer and magnetometer
+ *       * LPS22HB: MEMS pressure sensor
+ *       * HTS221: capacitive digital relative humidity and temperature sensor
  *     > STM32 Nucleo F401RE as the development board
  *     > Dragino LoRa/GPS Shield including
- *       - a 137 MHz to 1020 MHz Low Power Long Range LoRa RF Transceiver
- *       - a L80 GPS module based on MTK MT3339
- *  
- *  2) A LoRa gateway used to receive environmental data and messages
- *     from the sensor nodes and to send them to a cloud platform.
- *     
+ *       - RFM95W 137 MHz to 1020 MHz low-power, long-range LoRa RF transceiver
+ *       - Quectel L80 GPS module based on MTK MT3339
+ *     > Seed Studio Solar Charger shield v2.2 to which are connected
+ *       a 2000 mAh LiPo battery and a 1.5 W solar panel
+ *
+ *     In presence of a seismic event, the STM32 Nucleo board reads acceleration samples from
+ *     the LSM6DSL sensor to calculate some of the main parameters that characterize the 
+ *     strong-motion activity: bracketed duration and peak ground acceleration 
+ *     relative to the three components of the motion (x, y and z).
+ *     Each sensor node uses periodically the HTS221 and LPS22HB environmental sensors to get
+ *     temperature, relative humidity and pressure and send these values to the gateway.
+ *
+ *  2) A LoRa gateway that receives environmental data and earthquake alert messages
+ *     from the sensor nodes and sends them to a IoT Platform.
+ *
  *     In this implementation, the LoRa gateway has been made with:
- *     > B-L475E-IOT01A2 STM32L4 Discovery kit IoT node featuring
- *       - Wi-Fi® module Inventek ISM43362-M3G-L44 (802.11.4 b/g/n compliant)
- *       - Sub-GHz (868 Mhz) low-power RF module SPSGRF-868
- *       - Bluetooth® V4.1 module (SPBTLE-RF)
- *       - Capacitive humidity and temperature sensor (HTS221)
- *       - 3-axis magnetometer (LIS3MDL)
- *       - 3D accelerometer and 3D gyroscope (LSM6DSL)
- *       - 260-1260 hPa absolute digital output barometer (LPS22HB) 
+ *     > B-L475E-IOT01A2 STM32L4 Discovery kit IoT node featuring:
+ *       - Wi-Fi module Inventek ISM43362-M3G-L44 (802.11.4 b/g/n compliant)
+ *       - SPSGRF-868: Sub-GHz (868 Mhz) low-power RF module
+ *       - SPBTLE-RF: Bluetooth V4.1 module
+ *       - HTS221: capacitive relative humidity and temperature sensor
+ *       - LSM303AGR: MEMS 3D accelerometer and MEMS 3D magnetometer
+ *       - LSM6DSL: MEMS 3D accelerometer and MEMS 3D gyroscope
+ *       - LSP22HB: 260-1260 hPa absolute digital output barometer
  *     > Dragino LoRa Shield which includes:
- *       - the SX1276 868 Mhz Low Power Long Range LoRa RF Transceiver
- *     
- *  3) A cloud platform in order to allow the user to visualize 
- *     the earthquake status, alarm messages and envirnmental data.
- *     
- *     In this implementation, AdafruitIO has been choosen as the
- *     cloud platform and data coming from the LoRa gateway is sent 
- *     to Adafruit IO using the MQTT protocol
- *     
+ *       - the RFM95W low-power, long-range LoRa RF transceiver based on SX1276
+ *
+ *  3) A cloud platform that allows the user to visualize the earthquake status,
+ *     alarm messages and envirnmental data in real-time.
+ *     In the following implementation, AdafruitIO has been choosen as the cloud platform
+ *     and data coming from the LoRa gateway is sent to Adafruit IO using the MQTT protocol.
+ *
+ *  The following implementation allows also the gateway to send the acknowledge to a sensor node
+ *  to notify it about the sending of the data to Adafruit IoT Platform.
+ *
  *  Copyright (C) Biagio Montaruli <biagio.hkr@gmail.com>
- *  
- *  This program is free software: you can redistribute it and/or modify 
- *  it under the terms of the GNU General Public License as published by 
- *  the Free Software Foundation, either version 3 of the License, or 
+ *
+ *  This program is free software: you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published by
+ *  the Free Software Foundation, either version 3 of the License, or
  *  (at your option) any later version.
  *
  */
@@ -67,12 +79,12 @@
 SPIClass SPI_3(PC12, PC11, PC10);
 WiFiClass WiFi(&SPI_3, PE0, PE1, PE8, PB13);
 
-/************************* WiFi Configuration *********************************/
+/***************************************** WiFi Configuration *******************************************/
 // Update these values according to your WiFi network
 #define WLAN_SSID       "your_wifi_ssid"
 #define WLAN_PASS       "your_wifi_password"
 
-/************************* Adafruit.IO Setup *********************************/
+/******************************************* Adafruit.IO Setup ******************************************/
 
 #define AIO_SERVER      "io.adafruit.com"
 #define AIO_SERVERPORT  1883  // use 8883 and WiFiClientSecure (if supported) for SSL/TLS
@@ -80,7 +92,7 @@ WiFiClass WiFi(&SPI_3, PE0, PE1, PE8, PB13);
 #define AIO_USERNAME    "your_aio_username"
 #define AIO_KEY         "your_aio_key"
 
-/******************************* MQTT ****************************************/
+/********************************************** MQTT ****************************************************/
 
 // Create a new object of WiFiClient class to connect to the MQTT server.
 WiFiClient client;
@@ -88,7 +100,7 @@ WiFiClient client;
 // Setup the MQTT client class by passing in the WiFi client and MQTT server and login details.
 Adafruit_MQTT_Client mqtt(&client, AIO_SERVER, AIO_SERVERPORT, AIO_USERNAME, AIO_KEY);
 
-/****************************** Feeds ****************************************/
+/******************************************* Feeds ******************************************************/
 
 // Notice MQTT paths for AIO follow the form: <username>/feeds/<feedname>
 // Setup a feed called 'hts221-temp' for publishing.
@@ -112,37 +124,40 @@ Adafruit_MQTT_Publish pghayFeed = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/fe
 // Setup a feed called 'pgva' for publishing.
 Adafruit_MQTT_Publish pgvaFeed = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/pgva");
 
-/************************ LoRa Config **************************************/
+/*************************************** LoRa Config **************************************************/
 const int csPin = 10;         // LoRa radio chip select
-const int resetPin = 9;       // LoRa radio reset
-const int irqPin = 2;         // change for your board; must be a hardware interrupt pin
+const int resetPin = 5;       // LoRa radio reset
+const int irqPin = 3;         // change for your board; must be a hardware interrupt pin
 
-byte msgCount = 0;                // count of outgoing messages
-byte localAddress = 0xBB;         // address of this device
-byte destinationAddress = 0xAA;   // destination to send to
+byte msgCount = 0;            // count of received messages
+byte gatewayAddress = 0xBB;   // address of this device (LoRa Gateway)
+byte nodeAddress;             // address of LoRa node to send ACK
 
-/*********************** Serial Config *************************************/
+bool sendACK = false;
+byte msgIdACK;
+
+/***************************************** Serial Config *********************************************/
 #define SerialPort Serial
 #define SERIAL_DEBUG 1
 
-/*************************** Sketch Code ************************************/
+/***************************************** Sketch Code **********************************************/
 void setup() {
-  // Initialize Serial communication at 115200 bps.
+  // Initialize serial communication at 115200 bps:
   SerialPort.begin(115200);
   // wait for the Serial port to open
-  // while(!SerialPort) ;
+  while (!SerialPort);
   delay(10);
 
-  SerialPort.println("B-L475E-IOT01A Discovery IoT Node - LoRa Gateway");
+  SerialPort.println("B-L475E-IOT01A Discovery Kit - LoRa Gateway");
 
-  // set CS, reset, IRQ pin for SX1276 LoRa module
+  // Set CS, reset, IRQ pin for SX1276 LoRa module
   LoRa.setPins(csPin, resetPin, irqPin);
 
   // Set LoRa frequency band to 868 MHz
   if (!LoRa.begin(868E6)) {
     SerialPort.println("LoRa init failed. Check your connections.");
   }
-  SerialPort.println("LoRa radio successfully initialized.");
+  SerialPort.println("LoRa module successfully initialized.");
 
   // Set LoRa Mode 3
   // BW = 125 kHz; CR = 4/5; SF = 10
@@ -158,8 +173,8 @@ void setup() {
 
   // Initialize the WiFi module
   if (WiFi.status() == WL_NO_SHIELD) {
-    Serial.println("WiFi Module ISM43362-M3G-L44 not present");
-    while (true) ;
+    Serial.println("WiFi Module ISM43362-M3G-L44 not detected");
+    while (true);
   }
 
   // Print firmware version
@@ -174,23 +189,52 @@ void setup() {
 
     // Connect to WPA/WPA2 network.
     WiFi.begin(WLAN_SSID, WLAN_PASS);
-    // wait 10 seconds for connection:
-    delay(10000);
+    // wait 8 seconds for connection:
+    delay(8000);
   }
+  SerialPort.println("WiFi connected:");
   printWifiStatus();
 }
 
 void loop() {
-  // Ensure the connection to the MQTT server is alive (this will make the first
-  // connection and automatically reconnect when disconnected).
+  // Ensure the connection to the MQTT server is alive:
+  // this will make the first connection and automatically reconnect when disconnected.
   // See the MQTT_connect function definition further below.
   MQTT_connect();
 
+  if (sendACK == true) {
+    // Send ACK to LoRa Node:
+    // alert message, earthquake and environmental data have been sent to Adafruit IO
+    sendLoraACKPacket();
+    sendACK = false;
+    SerialPort.println("ACK sent to LoRa Node 0x" + String(nodeAddress, HEX));
+    Serial.println();
+    // wait 500 millis and go back into receive mode
+    delay(500);
+    LoRa.receive();
+  }
+
   // ping the server to keep the mqtt connection alive
   // NOT required if you are publishing once every KEEPALIVE seconds
-  // if(!mqtt.ping()) {
+  // if (!mqtt.ping()) {
   //   mqtt.disconnect();
   // }
+}
+
+// Function that builds a LoRa ACK packet and sends it.
+// The format of the LoRa ACK packet is:
+// | Destination |   Sender   |  Payload Length |  Payload data |
+//    1 byte         1 byte         1 byte           N byte
+void sendLoraACKPacket() {
+  String payload = "#ACK";
+
+  LoRa.beginPacket();              // start packet
+  LoRa.write(nodeAddress);         // add destination (LoRa node) address
+  LoRa.write(gatewayAddress);      // add sender (LoRa gateway) address
+  LoRa.write(msgIdACK);
+  LoRa.write(payload.length());    // add payload length
+  LoRa.print(payload);             // add payload
+  LoRa.endPacket();                // finish packet and send it
 }
 
 // Function that parse a LoRa packet sent by a LoRa Node
@@ -201,11 +245,13 @@ void parseLoRaPacket(int packetSize) {
   // if there's no data, return
   if (packetSize == 0) return;
 
-  // read bytes of packet header bytes:
-  byte receiverAddr = LoRa.read();    // receiver address
-  byte senderAddr = LoRa.read();      // sender address
-  byte msgId = LoRa.read();       // incoming message ID
-  byte msgLength = LoRa.read();   // incoming message length
+  msgCount++;
+
+  // read packet header fields (4 bytes):
+  byte receiverAddr = LoRa.read();  // receiver address
+  byte senderAddr = LoRa.read();    // sender address
+  byte msgId = LoRa.read();         // incoming message ID
+  byte msgLength = LoRa.read();     // incoming message length
 
   String data = "";
 
@@ -222,15 +268,15 @@ void parseLoRaPacket(int packetSize) {
   }
 
   // if the receiver isn't this device discard the packet
-  if (receiverAddr != localAddress) {
+  if (receiverAddr != gatewayAddress) {
     SerialPort.print("Received a packet with an unknow address: ");
-    SerialPort.print(receiverAddr, HEX);
-    SerialPort.println("\nPacket will be discarded.");
+    SerialPort.println(receiverAddr, HEX);
+    SerialPort.println("Packet will be discarded.");
     // skip rest of function
     return;
   }
 
-  // if message is for this device, print details and get the msg fields:
+  // if message is for this device, print details about the received message:
   SerialPort.println("Packet Info:");
   SerialPort.println("Received from: 0x" + String(senderAddr, HEX));
   SerialPort.println("Sent to: 0x" + String(receiverAddr, HEX));
@@ -238,14 +284,14 @@ void parseLoRaPacket(int packetSize) {
   SerialPort.println("Message length: " + String(msgLength));
   SerialPort.println("RSSI: " + String(LoRa.packetRssi()));
   SerialPort.println("SNR: " + String(LoRa.packetSnr()));
-  SerialPort.println("\nMessage Data:");
+  SerialPort.println("Message payload:");
   SerialPort.println(data);
   SerialPort.println();
 
   int startIndex, stopIndex;
   String tempData = "";
   String alertMsg = "EARTHQUAKE ALERT!!\n";
-  
+
   // A LoRa node can send two types of messages:
   // 1) Messages containing environmental data which have the following format:
   //    #TEMP=<temperature>#HUM=<humidity>#PRESS=<pressure>
@@ -330,11 +376,9 @@ void parseLoRaPacket(int packetSize) {
         // tempData = data.substring(startIndex, stopIndex);
         tempData = data.substring(startIndex);
       #if SERIAL_DEBUG == 1
-        Serial.print("Time = "); Serial.println(tempData);
+        Serial.print("TIME = "); Serial.println(tempData);
       #endif      
         alertMsg += ("Time: " + tempData);
-        SerialPort.print("Earthquake Alert Message: "); SerialPort.println(alertMsg);
-        alertFeed.publish(alertMsg.c_str());
       }
       // reduced format earthquake alert message
       else {
@@ -344,9 +388,16 @@ void parseLoRaPacket(int packetSize) {
         Serial.print("DUR = "); Serial.println(tempData);
       #endif
         alertMsg += ("Duration: " + tempData + "\n\n");
-        SerialPort.println("Earthquake Alert Message:"); SerialPort.println(alertMsg);
-        alertFeed.publish(alertMsg.c_str());
       }
+
+      #if SERIAL_DEBUG == 1
+      SerialPort.print("Earthquake Alert Message: "); SerialPort.println(alertMsg);
+      #endif
+      alertFeed.publish(alertMsg.c_str());
+
+      msgIdACK = msgId;
+      nodeAddress = senderAddr;
+      sendACK = true;
     }
   }
   // message containing environmental data
@@ -400,7 +451,7 @@ void MQTT_connect() {
     retries--;
     if (retries == 0) {
       SerialPort.println("Failed connecting to Adafruit IO through MQTT");
-      // while (true) ;
+      // while (true);
     }
   }
   SerialPort.println("Connected!");
@@ -442,7 +493,7 @@ void printWifiStatus() {
   // print the BSSID of the network you're connected to:
   byte bssid[6];
   WiFi.BSSID(bssid);
-  
+
   Serial.print("BSSID: ");
   for (uint8_t i = 0; i < 6; i++) {
     if (bssid[i] < 0x10) {
@@ -460,7 +511,7 @@ void printWifiStatus() {
   // print the MAC address of the WiFi module:
   byte macAddr[6];
   WiFi.macAddress(macAddr);
-  
+
   Serial.print("MAC Address: ");
   for (uint8_t i = 0; i < 6; i++) {
     if (macAddr[i] < 0x10) {
@@ -495,4 +546,3 @@ void printWifiStatus() {
   Serial.print("Encryption type: ");
   printEncryptionType(WiFi.encryptionType());
 }
-
