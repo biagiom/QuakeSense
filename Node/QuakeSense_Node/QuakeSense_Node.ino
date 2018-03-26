@@ -85,17 +85,18 @@
 
 // Change these values according to your implementation
 #define ENABLE_ENV_SENSORS 1
-#define PRINT_ENV_DATA 1
+#define PRINT_ENV_DATA 0
 #define SEND_ENV_DATA 1
-#define DEBUG_LORA_PACKET 1
+#define DEBUG_LORA_PACKET 0
 #define WAIT_LORA_ACK 0
 #define PRINT_ACC_DATA 0
-#define PRINT_GPS_DATA 1
+#define ENABLE_GPS 1
+#define PRINT_GPS_DATA 0
 #define GPS_FIX_TIME 1
 #define GPS_MODE_ALWAYSLOCATE
 //#define GPS_MODE_STANDBY
-#define SERIAL_DEBUG 1
-#define PRINT_EARTHQUAKE_VALUES 1
+#define SERIAL_DEBUG 0
+#define PRINT_EARTHQUAKE_VALUES 0
 
 #if (PRINT_ENV_DATA == 1)  || (DEBUG_LORA_PACKET == 1) || \
     (PRINT_ACC_DATA == 1)  || (PRINT_GPS_DATA == 1)    || \
@@ -114,9 +115,11 @@ volatile bool motionDetected = false;
 
 #define DEV_I2C Wire
 
-// Use Serial2 port (USART2 on PA1, PA0) to print data in the Serial Monitor
+// Use Serial2 port (USART2 on PA3, PA2) to print data in the Serial Monitor
 #define SerialPort Serial
+// HardwareSerial SerialPort(PA_3, PA_2);
 
+#if ENABLE_GPS == 1
 // For GPS data use Serial6 port (USART6 on PA_12 (RX) and PA_11 (TX))
 HardwareSerial GPSSerial(PA_12, PA_11);
 
@@ -130,6 +133,7 @@ bool isGPSDataValid = false;
 #elif defined(GPS_MODE_STANDBY)
 #undef GPS_MODE_ALWAYSLOCATE
 #endif
+#endif // ENABLE_GPS
 
 const int csPin = 10;         // LoRa radio chip select
 const int resetPin = 9;       // LoRa radio reset
@@ -150,13 +154,14 @@ HTS221Sensor *HTS221_HumTemp;
 LPS22HBSensor *LPS22HB_Press;
 
 bool getEnvData = true;
-
-// time interval to update the environmental data:
-// temperature, humidity and pressure: 15 minutes
-#define ENVDATA_UPDATE_TIME_MIN 15
-
-#define ENVDATA_UPDATE_TIME_MILLIS (ENVDATA_UPDATE_TIME_MIN * 60000)
 #endif
+
+// time interval during which sensor node is in low-power mode
+// when the node will wake up it sends environmental data
+// (temperature, humidity and pressure) to the gateway.
+#define SLEEP_TIME_MIN 15  // set sleep time to 15 min 
+
+#define SLEEP_TIME_MILLIS (SLEEP_TIME_MIN * 60000)
 
 LSM6DSLSensor *LSM6DSL_AccGyro;
 
@@ -242,19 +247,25 @@ void setup() {
     SerialPort.println("LoRa init failed. Check your connections.");
   #endif
   }
+  else {
   #if SERIAL_DEBUG == 1
     SerialPort.println("LoRa module successfully initialized.");
   #endif
 
-  loraInit = true;
-  // Set LoRa Mode 3
-  // BW = 125 kHz; CR = 4/5; SF = 10
-  LoRa.setSpreadingFactor(10);
-  LoRa.setSignalBandwidth(125E3);
-  LoRa.setCodingRate4(5);
-  // set TX power of LoRa module:
-  LoRa.setTxPower(13);
+    loraInit = true;
+    // Set LoRa Mode 3
+    // BW = 125 kHz; CR = 4/5; SF = 10
+    LoRa.setSpreadingFactor(10);
+    LoRa.setSignalBandwidth(125E3);
+    LoRa.setCodingRate4(5);
+    // set TX power of LoRa module:
+    LoRa.setTxPower(13);
 
+    delay(500);
+    LoRa.sleep();
+  }
+
+#if ENABLE_GPS == 1
   // 9600 NMEA is the default baud rate for MTK GPS's
   GPS.begin(9600);
 
@@ -296,8 +307,7 @@ void setup() {
   #endif
   }
 #endif
-
-  LoRa.sleep();
+#endif // ENABLE_GPS
 }
 
 void loop() {
@@ -324,28 +334,34 @@ void loop() {
   #endif
     // if SEND_ENV_DATA is 1, send humidity, temperature and pressure values to the LoRa gateway
   #if SEND_ENV_DATA == 1
-    // Build LoRa message
-    String msg = "#TEMP=" + String(hts221_temperature, 2) +
-                 "#HUM=" + String(hts221_humidity, 2) +
-                 "#PRESS=" + String(lps22hb_pressure, 2);
-  #if DEBUG_LORA_PACKET == 1
-    Serial.println("Lora packet sent:");
-    Serial.println(msg);
-  #endif    // DEBUG_LORA_PACKET
-  sendLoraPacket(msg);
+    if (loraInit == true) {
+      // Build LoRa message
+      String msg = "#TEMP=" + String(hts221_temperature, 2) +
+                   "#HUM=" + String(hts221_humidity, 2) +
+                   "#PRESS=" + String(lps22hb_pressure, 2);
+
+      sendLoraPacket(msg);
+
+    #if DEBUG_LORA_PACKET == 1
+      SerialPort.println("Lora packet sent:");
+      SerialPort.println(msg);
+    #endif    // DEBUG_LORA_PACKET
+    }
   #endif    // SEND_ENV_DATA
   }
-  #endif   // ENABLE_ENV_SENSORS
+#endif   // ENABLE_ENV_SENSORS
 
 #if SERIAL_DEBUG == 1
   SerialPort.println("Starting Deep Sleep low-power mode (STM32 Stop mode)...");
   delay(100);
 #endif
 
-  LowPower.deepSleep(ENVDATA_UPDATE_TIME_MILLIS);
+  LowPower.deepSleep(SLEEP_TIME_MILLIS);
 
   if (motionDetected == true) {
+  #if ENABLE_ENV_SENSORS == 1
     getEnvData = false;
+  #endif
     earthquakeDetected = false;
     motionDetected = false;
   }
@@ -354,7 +370,9 @@ void loop() {
     delay(100);
     SerialPort.println("Waking up from Deep Sleep mode...");
   #endif
+  #if ENABLE_ENV_SENSORS == 1
     getEnvData = true;
+  #endif
   }
 }
 
@@ -402,7 +420,7 @@ void earthquakeDetection() {
 
     earthquakeDetected = true;
 
-    #if defined(GPS_MODE_STANDBY) || defined(GPS_MODE_ALWAYSLOCATE)
+    #if ENABLE_GPS == 1
     #if defined(GPS_MODE_STANDBY)
     // switch from standby to full on mode
     if (GPS.wakeupStandby()) {
@@ -516,7 +534,9 @@ void earthquakeDetection() {
     SerialPort.println(" samples.");
   #endif
 
+  #if ENABLE_GPS == 1
     updateGPSData();
+  #endif
 
     if (loraInit) {
       String msg = "#ALERT!";
@@ -529,6 +549,7 @@ void earthquakeDetection() {
       msg += "#DUR=";
       msg += String(meanBracketedDuration);
 
+    #if ENABLE_GPS == 1
       if (isGPSDataValid) {
         msg += "#LAT=";
         msg += String(GPS.getLatitude(), 2);
@@ -565,19 +586,20 @@ void earthquakeDetection() {
           msg += "0";
         msg += String(GPS.getSeconds());
       }
-
-    #if DEBUG_LORA_PACKET == 1
-      Serial.println("Lora packet sent:");
-      Serial.println(msg);
     #endif
 
       sendLoraPacket(msg);
+
+    #if DEBUG_LORA_PACKET == 1
+      SerialPort.println("Lora packet sent:");
+      SerialPort.println(msg);
+    #endif
 
     #if WAIT_LORA_ACK == 1
       delay(500);
       LoRa.receive();
       uint32_t loraTimer = millis();
-      Serial.println("Waiting for ACK...");
+      SerialPort.println("Waiting for ACK...");
       // wait for the ACK sent by the gateway:
       // when a new LoRa message arrives, an interruput is generated and
       // the parseLoRaPacket function is called
@@ -590,6 +612,7 @@ void earthquakeDetection() {
       LoRa.sleep();
     }
 
+  #if ENABLE_GPS == 1
   #if defined(GPS_MODE_STANDBY)
     // switch to standby mode to save energy:
     if (GPS.setStandbyMode()) {
@@ -615,6 +638,7 @@ void earthquakeDetection() {
     #endif
     }
   #endif
+  #endif // ENABLE_GPS
   }
 }
 
@@ -633,13 +657,14 @@ void sendLoraPacket(String data) {
   msgCount++;                  // increment message ID
 }
 
+#if ENABLE_GPS == 1
 // Function that reads data from the GPS module, parse it to get:
 // latitude, longitude, altitude, time, date and other GPS values.
 void updateGPSData() {
   uint32_t gpsTimer = millis();
 
   bool NMEAparsed = false;
-  while (millis() - gpsTimer < GPS_READ_TIME) {
+  while ((millis() - gpsTimer) < GPS_READ_TIME) {
     // read data from the GPS
     char c = GPS.read();
 
@@ -721,6 +746,7 @@ void updateGPSData() {
     }
   }
 }
+#endif
 
 #if WAIT_LORA_ACK == 1
 // Function that parse a LoRa packet sent by a LoRa Node

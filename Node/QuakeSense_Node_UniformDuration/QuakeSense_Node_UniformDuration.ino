@@ -146,13 +146,14 @@ HTS221Sensor *HTS221_HumTemp;
 LPS22HBSensor *LPS22HB_Press;
 
 bool getEnvData = true;
-
-// time interval to update the environmental data:
-// temperature, humidity and pressure: 15 minutes
-#define ENVDATA_UPDATE_TIME_MIN 15
-
-#define ENVDATA_UPDATE_TIME_MILLIS (ENVDATA_UPDATE_TIME_MIN * 60000)
 #endif
+
+// time interval during which sensor node is in low-power mode
+// when the node will wake up it sends environmental data
+// (temperature, humidity and pressure) to the gateway.
+#define SLEEP_TIME_MIN 15  // set sleep time to 15 min 
+
+#define SLEEP_TIME_MILLIS (SLEEP_TIME_MIN * 60000)
 
 LSM6DSLSensor *LSM6DSL_AccGyro;
 
@@ -241,17 +242,19 @@ void setup() {
     SerialPort.println("LoRa init failed. Check your connections.");
   #endif
   }
+  else {
   #if SERIAL_DEBUG == 1
-  SerialPort.println("LoRa module successfully initialized.");
+    SerialPort.println("LoRa module successfully initialized.");
   #endif
-  loraInit = true;
-  // Set LoRa Mode 3
-  // BW = 125 kHz; CR = 4/5; SF = 10
-  LoRa.setSpreadingFactor(10);
-  LoRa.setSignalBandwidth(125E3);
-  LoRa.setCodingRate4(5);
-  // set TX power to 13 dBm
-  LoRa.setTxPower(13);
+    loraInit = true;
+    // Set LoRa Mode 3
+    // BW = 125 kHz; CR = 4/5; SF = 10
+    LoRa.setSpreadingFactor(10);
+    LoRa.setSignalBandwidth(125E3);
+    LoRa.setCodingRate4(5);
+    // set TX power to 13 dBm
+    LoRa.setTxPower(13);
+  }
 
   // 9600 NMEA is the default baud rate for MTK GPS's
   GPS.begin(9600);
@@ -320,27 +323,32 @@ void loop() {
     SerialPort.print("Presure[mbar]: ");
     SerialPort.println(lps22hb_pressure, 2);
   #endif
-    // send humidity, temperature and pressure values to the LoRa gateway if SEND_ENV_DATA is 1
+
+    // if SEND_ENV_DATA is 1, send humidity, temperature and pressure values to the LoRa gateway
   #if SEND_ENV_DATA == 1
-    // Build LoRa message
-    String msg = "#TEMP=" + String(hts221_temperature, 2) +
-                 "#HUM=" + String(hts221_humidity, 2) +
-                 "#PRESS=" + String(lps22hb_pressure, 2);
-  #if DEBUG_LORA_PACKET == 1
-    Serial.println("Lora packet sent:");
-    Serial.println(msg);
-  #endif    // DEBUG_LORA_PACKET
-  sendLoraPacket(msg);
+    if (loraInit == true) {
+      // Build LoRa message
+      String msg = "#TEMP=" + String(hts221_temperature, 2) +
+                   "#HUM=" + String(hts221_humidity, 2) +
+                   "#PRESS=" + String(lps22hb_pressure, 2);
+
+      sendLoraPacket(msg);
+
+    #if DEBUG_LORA_PACKET == 1
+      SerialPort.println("Lora packet sent:");
+      SerialPort.println(msg);
+    #endif    // DEBUG_LORA_PACKET
+    }
   #endif    // SEND_ENV_DATA
   }
-  #endif   // ENABLE_ENV_SENSORS
+#endif   // ENABLE_ENV_SENSORS
 
 #if SERIAL_DEBUG == 1
   SerialPort.println("Starting Deep Sleep low-power mode (STM32 Stop mode)...");
   delay(100);
 #endif
 
-  LowPower.deepSleep(ENVDATA_UPDATE_TIME_MILLIS);
+  LowPower.deepSleep(SLEEP_TIME_MILLIS);
 
   if (motionDetected == true) {
     motionDetected = false;
