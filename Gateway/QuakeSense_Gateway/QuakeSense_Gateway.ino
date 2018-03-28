@@ -1,15 +1,15 @@
 /*
  *  QuakeSense_Gateway
  * 
- *  QuakeSense is an IoT project that aims to "sense" and monitor earthquakes through a Lora network.
+ *  QuakeSense is an IoT project that aims to "sense" and monitor earthquakes through a LoRa network.
  * 
  *  The main elements of this project are:
  *  1) At least one Sensor Node (Mote) consisting of:
  *     - a 3-axis accelerometer used to measure strong ground motion activity.
  *     - a LoRa radio module used to transmit an alarm and the main parameters that
- *       characterize the strong motion activity to a single channel LoRa gateway
- *     - A GPS module used to get altitude, longitude and latitude of
- *       the area where the seismic event occurs.
+ *       characterize strong motion activity to a single channel LoRa gateway
+ *     - A GPS module used to get location (altitude, longitude and latitude)
+ *       and date relative to the seismic event.
  *     - a development board that is used to control the accelerometer,
  *       the LoRa module and the GPS module.
  *     - a LiPo battery used to power the development board.
@@ -32,15 +32,16 @@
  *     the LSM6DSL sensor to calculate some of the main parameters that characterize the 
  *     strong-motion activity: bracketed duration and peak ground acceleration 
  *     relative to the three components of the motion (x, y and z).
+ *     Then the Sensor Node sends the calculated parameters to the LoRa gateway.
  *     Each sensor node uses periodically the HTS221 and LPS22HB environmental sensors to get
- *     temperature, relative humidity and pressure and send these values to the gateway.
+ *     temperature, relative humidity and pressure and sends these values to the gateway.
  *
  *  2) A LoRa gateway that receives environmental data and earthquake alert messages
  *     from the sensor nodes and sends them to a IoT Platform.
  *
  *     In this implementation, the LoRa gateway has been made with:
  *     > B-L475E-IOT01A2 STM32L4 Discovery kit IoT node featuring:
- *       - Wi-Fi module Inventek ISM43362-M3G-L44 (802.11.4 b/g/n compliant)
+ *       - Wi-Fi module Inventek ISM43362-M3G-L44 (802.11 b/g/n)
  *       - SPSGRF-868: Sub-GHz (868 Mhz) low-power RF module
  *       - SPBTLE-RF: Bluetooth V4.1 module
  *       - HTS221: capacitive relative humidity and temperature sensor
@@ -50,8 +51,8 @@
  *     > Dragino LoRa Shield which includes:
  *       - the RFM95W low-power, long-range LoRa RF transceiver based on SX1276
  *
- *  3) A cloud platform that allows the user to visualize the earthquake status,
- *     alarm messages and envirnmental data in real-time.
+ *  3) A cloud platform that allows the user to visualize earthquakes' parameters,
+ *     alarm messages and envirnomental data in real-time.
  *     In the following implementation, AdafruitIO has been choosen as the cloud platform
  *     and data coming from the LoRa gateway is sent to Adafruit IO using the MQTT protocol.
  *
