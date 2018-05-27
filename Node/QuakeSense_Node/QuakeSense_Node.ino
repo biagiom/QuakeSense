@@ -332,7 +332,7 @@ void loop() {
     SerialPort.println(hts221_humidity, 2);
     SerialPort.print("Temperature[°C]: ");
     SerialPort.println(hts221_temperature, 2);
-    SerialPort.print("Presure[mbar]: ");
+    SerialPort.print("Pressure[mbar]: ");
     SerialPort.println(lps22hb_pressure, 2);
   #endif
     // if SEND_ENV_DATA is 1, send humidity, temperature and pressure values to the LoRa gateway
@@ -346,7 +346,7 @@ void loop() {
       sendLoraPacket(msg);
 
     #if DEBUG_LORA_PACKET == 1
-      SerialPort.println("Lora packet sent:");
+      SerialPort.println("LoRa packet sent:");
       SerialPort.println(msg);
     #endif    // DEBUG_LORA_PACKET
     }

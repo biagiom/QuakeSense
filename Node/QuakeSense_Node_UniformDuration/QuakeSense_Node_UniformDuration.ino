@@ -41,7 +41,7 @@
  *
  *     In this implementation, the LoRa gateway has been made with:
  *     > B-L475E-IOT01A2 STM32L4 Discovery kit IoT node featuring:
- *       - Wi-Fi module Inventek ISM43362-M3G-L44 (802.11 b/g/n)
+ *       - Wi-Fi module Inventek ISM43362-M3G-L44 (802.11b/g/n)
  *       - SPSGRF-868: Sub-GHz (868 Mhz) low-power RF module
  *       - SPBTLE-RF: Bluetooth V4.1 module
  *       - HTS221: capacitive relative humidity and temperature sensor
@@ -323,7 +323,7 @@ void loop() {
     SerialPort.println(hts221_humidity, 2);
     SerialPort.print("Temperature[°C]: ");
     SerialPort.println(hts221_temperature, 2);
-    SerialPort.print("Presure[mbar]: ");
+    SerialPort.print("Pressure[mbar]: ");
     SerialPort.println(lps22hb_pressure, 2);
   #endif
 
@@ -338,7 +338,7 @@ void loop() {
       sendLoraPacket(msg);
 
     #if DEBUG_LORA_PACKET == 1
-      SerialPort.println("Lora packet sent:");
+      SerialPort.println("LoRa packet sent:");
       SerialPort.println(msg);
     #endif    // DEBUG_LORA_PACKET
     }
@@ -600,7 +600,7 @@ void sendEarthquakeData() {
     }
 
   #if DEBUG_LORA_PACKET == 1
-    Serial.println("Lora packet sent:");
+    Serial.println("LoRa packet sent:");
     Serial.println(msg);
   #endif
 
