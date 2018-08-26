@@ -91,14 +91,16 @@
 #define PRINT_ENV_DATA 1
 #define SEND_ENV_DATA 1
 #define DEBUG_LORA_PACKET 1
-#define WAIT_LORA_ACK 1
+#define WAIT_LORA_ACK_EAM 1
+#define WAIT_LORA_ACK_EDP 1
+#define USE_EAM_REDUCED_FORMAT 0
 #define PRINT_ACC_DATA 0
 #define ENABLE_GPS 1
 #define PRINT_GPS_DATA 1
 #define GPS_MODE_ALWAYSLOCATE
 //#define GPS_MODE_STANDBY
 #define SERIAL_DEBUG 1
-#define PRINT_EARTHQUAKE_VALUES 0
+#define PRINT_EARTHQUAKE_VALUES 1
 
 #if (PRINT_ENV_DATA == 1)  || (DEBUG_LORA_PACKET == 1) || \
     (PRINT_ACC_DATA == 1)  || (PRINT_GPS_DATA == 1)    || \
@@ -348,10 +350,12 @@ void loop() {
     // if SEND_ENV_DATA is 1, send humidity, temperature and pressure values to the LoRa gateway
   #if SEND_ENV_DATA == 1
     if (loraInit == true) {
-      // Build LoRa message
-      String msg = "#TEMP=" + String(hts221_temperature, 2) +
-                   "#HUM=" + String(hts221_humidity, 2) +
-                   "#PRESS=" + String(lps22hb_pressure, 2);
+      // Payload format of an EDP LoRa packet (max 27 byte):
+      // |  Type  |  TEMPERATURE  |  HUMIDITY  |  PRESSURE  |
+      //   5 byte      7 byte         7 byte       8 byte
+      String msg = "#EDPB#" + String(hts221_temperature, 2) + 
+                   "#" + String(hts221_humidity, 2) +
+                   "#" + String(lps22hb_pressure, 2) + "#";
 
       sendLoraPacket(msg);
 
@@ -359,6 +363,20 @@ void loop() {
       SerialPort.println("LoRa packet sent:");
       SerialPort.println(msg);
     #endif    // DEBUG_LORA_PACKET
+
+    #if WAIT_LORA_ACK_EDP == 1
+      delay(500);
+      LoRa.receive();
+      uint32_t loraTimer = millis();
+      SerialPort.println("Waiting for ACK of EDP...");
+      // wait for the ACK sent by the gateway:
+      // when a new LoRa message arrives, an interruput is generated and
+      // the parseLoRaPacket function is called
+      while ((millis() - loraTimer) <= LORA_RX_INTERVAL) {
+        if (readLoRaPacket(LoRa.parsePacket()))
+          break;
+      }
+    #endif
     }
   #endif    // SEND_ENV_DATA
   }
@@ -552,27 +570,32 @@ void earthquakeDetection() {
   #endif
 
     if (loraInit) {
-      String msg = "#ALERT!";
-      msg += "#PGHAX=";
-      msg += String(pghax);
-      msg += "#PGHAY=";
-      msg += String(pghay);
-      msg += "#PGVA=";
-      msg += String(pgva);
-      msg += "#DUR=";
-      msg += String(averageBracketedDuration);
+      // Payload format of an EAM LoRa packet:
+      // 1) EAMF: FULL FORMAT (max 73 byte)
+      //    |  Type  |  PGHAX  |  PGHAY  |  PGVA  |  Bracketed duration  |  Latitude  |  Longitude |  Altitude  |  Date (DD/MM/YYYY)  |  Time (HH:MM:SS)  |
+      //      5 byte    5 byte   5 byte    5 byte          6 byte            9 byte       9 byte       8 byte              11 byte            10 byte
+      // 2) EAMR: REDUCED FORMAT FORMAT (LoRaWAN-compliant: max 45 byte)
+      //    |  Type  |  PGHAX  |  PGHAY  |  PGVA  |  Bracketed duration  |  Latitude  |  Longitude |
+      //      5 byte    5 byte   5 byte    5 byte          6 byte            9 byte       10 byte
+      // 3) EAMB: BASE FORMAT (max 27 byte)
+      //    |  Type  |  PGHAX  |  PGHAY  |  PGVA  |  Bracketed duration  |
+      //      5 byte    5 byte   5 byte    5 byte          7 byte
+    #if USE_EAM_REDUCED_FORMAT == 1
+      String msg = "#EAMR#";
+    #else
+      String msg = "#EAMF#";
+    #endif
+      msg += (String(pghax) + "#");
+      msg += (String(pghay) + "#");
+      msg += (String(pgva) + "#");
+      msg += (String(averageBracketedDuration) + "#");
 
     #if ENABLE_GPS == 1
       if (isGPSDataValid) {
-        msg += "#LAT=";
-        msg += String(GPS.getLatitude(), 2);
-        msg += String(GPS.getLatCardinalDir());
-        msg += "#LON=";
-        msg += String(GPS.getLongitude(), 2);
-        msg += String(GPS.getLonCardinalDir());
-        msg += "#ALT=";
-        msg += String(GPS.getAltitude(), 2);
-        msg += "#DATE=";
+        msg += (String(GPS.getLatitude(), 2) + String(GPS.getLatCardinalDir()) + "#");
+        msg += (String(GPS.getLongitude(), 2) + String(GPS.getLonCardinalDir()) + "#");
+      #if USE_EAM_REDUCED_FORMAT == 0
+        msg += (String(GPS.getAltitude(), 2) + "#");
         if (GPS.getDay() < 10)
           msg += "0";
         msg += (String(GPS.getDay()) + "/");
@@ -582,17 +605,24 @@ void earthquakeDetection() {
         if (GPS.getYear() < 10)
           msg += "0";
         msg += String(GPS.getYear());
-        msg += "#TIME=";
+        msg += "#";
         if ((GPS.getHour() + GPS_TIME_OFFSET) < 10)
           msg += "0";
         msg += (String(GPS.getHour() + GPS_TIME_OFFSET) + ":");
         if (GPS.getMinutes() < 10)
           msg += "0";
-        msg += String(GPS.getMinutes()) +  ":";
+        msg += (String(GPS.getMinutes()) +  ":");
         if (GPS.getSeconds() < 10)
           msg += "0";
         msg += String(GPS.getSeconds());
+        msg += "#";
+      #endif
       }
+      else {
+        msg.setCharAt(4, 'B');
+      }
+    #else
+      msg.setCharAt(4, 'B');
     #endif
 
       sendLoraPacket(msg);
@@ -602,11 +632,11 @@ void earthquakeDetection() {
       SerialPort.println(msg);
     #endif
 
-    #if WAIT_LORA_ACK == 1
+    #if WAIT_LORA_ACK_EAM == 1
       delay(500);
       LoRa.receive();
       uint32_t loraTimer = millis();
-      SerialPort.println("Waiting for ACK...");
+      SerialPort.println("Waiting for ACK of EAM...");
       // wait for the ACK sent by the gateway:
       // when a new LoRa message arrives, an interruput is generated and
       // the parseLoRaPacket function is called
@@ -783,7 +813,7 @@ void updateGPSData() {
 }
 #endif
 
-#if WAIT_LORA_ACK == 1
+#if (WAIT_LORA_ACK_EAM == 1) || (WAIT_LORA_ACK_EDP == 1)
 // Function that parse a LoRa packet sent by a LoRa Node
 // The format of the LoRa packet is:
 // |  Receiver Addr  |  Sender Addr  |  Message ID  |  Payload Length  |  Payload data  |  Checksum  |

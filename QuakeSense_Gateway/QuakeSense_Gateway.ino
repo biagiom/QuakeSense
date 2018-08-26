@@ -73,9 +73,11 @@
 #include <WiFiST.h>
 #include <WiFiServerST.h>
 #include <WiFiClientST.h>
+#include <WiFiUdpST.h>
 #include <Adafruit_MQTT.h>
 #include <Adafruit_MQTT_Client.h>
 #include <LoRa.h>
+#include <time.h>
 
 SPIClass SPI_3(PC12, PC11, PC10);
 WiFiClass WiFi(&SPI_3, PE0, PE1, PE8, PB13);
@@ -129,7 +131,9 @@ Adafruit_MQTT_Publish pghayFeed = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/fe
 // Setup a feed called 'pgva' for publishing.
 Adafruit_MQTT_Publish pgvaFeed = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/pgva");
 
-/*************************************** LoRa Config **************************************************/
+bool isMqttConnected = false;
+
+/**************************************** LoRa Config ***************************************************/
 const int csPin = 10;         // LoRa radio chip select
 const int resetPin = 5;       // LoRa radio reset
 const int irqPin = 3;         // change for your board; must be a hardware interrupt pin
@@ -149,11 +153,56 @@ byte msgIdACK;
 
 #define LORA_HEADER_LEN 4
 
-/***************************************** Serial Config *********************************************/
+typedef enum {
+  EAM_TYPE = 1,
+  PGHAX = 2,
+  PGHAY = 3,
+  PGVA  = 4,
+  DURATION = 5,
+  LATITUDE = 6,
+  LONGITUDE = 7,
+  ALTITUDE = 8,
+  DATE = 9,
+  TIME = 10
+} LORA_EAM_PACKET_FIELDS;
+
+typedef enum {
+  EDP_TYPE = 1,
+  TEMP = 2,
+  HUM  = 3,
+  PRESS = 4
+} LORA_EDP_PACKET_FIELDS;
+
+/******************************************* Serial Config **********************************************/
+
 #define SerialPort Serial
 #define SERIAL_DEBUG 1
 
-/***************************************** Sketch Code **********************************************/
+/****************************************** Network *****************************************************/
+
+// NTP time stamp is in the first 48 bytes of the message
+const int NTP_PACKET_SIZE = 48;
+//buffer to hold incoming and outgoing packets
+byte packetBuffer[NTP_PACKET_SIZE];
+// IP Address of the NTP server: 188.213.165.209 => it.pool.ntp.org
+IPAddress timeServer(188, 213, 165, 209);
+unsigned long epoch = 0;
+// Unix time starts on Jan 1 1970. In seconds, that's 2208988800:
+const unsigned long seventyYears = 2208988800UL;
+
+String NTPTimestamp;
+
+// Create an UDP instance to send and receive packets over UDP
+WiFiUDP Udp;
+
+typedef enum {
+  UDP_STATUS_OK = 0,
+  UDP_CONNECTION_ERROR = 1,
+  UDP_WRITE_ERROR = 2,
+  UDP_READ_ERROR = 3
+} UDP_STATUS;
+
+/******************************************* Sketch Code ************************************************/
 void setup() {
   // Initialize serial communication at 115200 bps:
   SerialPort.begin(115200);
@@ -190,7 +239,7 @@ void setup() {
 
   // Print firmware version
   String fv = WiFi.firmwareVersion();
-  SerialPort.print("Firwmare version: ");
+  SerialPort.print("Firmware version: ");
   SerialPort.println(fv);
 
   // Attempt to connect to Wifi network
@@ -211,7 +260,7 @@ void loop() {
   // Ensure the connection to the MQTT server is alive:
   // this will make the first connection and automatically reconnect when disconnected.
   // See the MQTT_connect function definition further below.
-  MQTT_connect();
+  isMqttConnected = MQTT_connect();
 
   if (sendACK == true) {
     // Send ACK to LoRa Node:
@@ -234,7 +283,7 @@ void loop() {
 
 byte getChecksum(byte *buffer, uint16_t length) {
   byte checksum = 0;
-  
+
   for (uint32_t i = 0; i < length; i++) {
     if ((checksum + buffer[i]) > 255) {
       checksum += (255 - buffer[i]);
@@ -265,7 +314,7 @@ void sendLoraACKPacket() {
   buf[1] = gatewayAddress;
   buf[2] = msgIdACK;
   buf[3] = payloadLen;
-  payload.getBytes(buf + LORA_HEADER_LEN, payloadLen+1);
+  payload.getBytes(buf + LORA_HEADER_LEN, payloadLen + 1);
   byte checksum = getChecksum(buf, payloadLen + LORA_HEADER_LEN + 1);
 #if SERIAL_DEBUG == 1
   SerialPort.print("Checksum ACK: ");
@@ -304,17 +353,20 @@ void parseLoRaPacket(int packetSize) {
   buf[1] = senderAddr;
   buf[2] = msgID;
   buf[3] = payloadLen;
-  data.getBytes(buf + LORA_HEADER_LEN, payloadLen+1);
+  data.getBytes(buf + LORA_HEADER_LEN, payloadLen + 1);
   byte computedChecksum = getChecksum(buf, payloadLen + LORA_HEADER_LEN + 1);
 
   if (checksum != computedChecksum) {
-    SerialPort.println("LoRa Error: Bad Checksum");
+    String errorMsg = "LoRa Error: Bad Checksum";
+    SerialPort.println(errorMsg);
     SerialPort.print("Checksum received: ");
     SerialPort.println(checksum);
     SerialPort.print("Checksum computed: ");
     SerialPort.println(computedChecksum);
     SerialPort.println("Payload received:\n" + data);
-    
+
+    // Send an error message to the Adafruit IO platform
+    alertFeed.publish(errorMsg.c_str());
     return;
   }
 
@@ -333,7 +385,7 @@ void parseLoRaPacket(int packetSize) {
   SerialPort.println("Sent to: 0x" + String(receiverAddr, HEX));
   SerialPort.println("Message ID: " + String(msgID));
   SerialPort.println("Message length: " + String(payloadLen));
-  int rssi = LoRa.packetRssi();
+  int16_t rssi = LoRa.packetRssi();
   SerialPort.println("RSSI: " + String(rssi));
   float snr = LoRa.packetSnr();
   SerialPort.println("SNR: " + String(snr));
@@ -342,142 +394,176 @@ void parseLoRaPacket(int packetSize) {
   SerialPort.println();
 
 
-  int startIndex, stopIndex;
-  String tempData = "";
-  String alertMsg = "EARTHQUAKE ALERT!!\n";
+  int8_t startIndex, stopIndex;
+  String fieldValue = "";
+  String alertMsg;
 
-  // A LoRa node can send two types of messages:
-  // 1) Messages containing environmental data which have the following format:
-  //    #TEMP=<temperature>#HUM=<humidity>#PRESS=<pressure>
-  // 2) Eartquake alert messages which have the following formats:
-  //    - Full format with GPS data
-  //      #ALERT!#PGHAX=<pgha x-axis>#PGHAY=<pgha y-axis>#PGVA=<pgva>#DUR=<duration>#LAT=<latitude>#LON=<longitude>#ALT=<altitude>#DATE=<date>#TIME=<time>
-  //    - Reduced format without GPS data
-  //      #ALERT!#PGHAX=<pgha x-axis>#PGHAY=<pgha y-axis>#PGVA=<pgva>#DUR=<duration>
+  // A LoRa Node can send two types of messages: EAM (Eartquake Alert Message) and EDP (Environmental Data Packet)
+  //
+  // Payload format of an EAM LoRa packet:
+  // 1) EAMF: FULL FORMAT (max 72 byte)
+  //    |  Type  |  PGHAX  |  PGHAY  |  PGVA  |  Bracketed duration  |  Latitude  |  Longitude |  Altitude  |  Date (DD/MM/YYYY)  |  Time (HH:MM:SS)  |
+  //      5 byte    5 byte   5 byte    5 byte          6 byte            9 byte       9 byte       8 byte              11 byte            9 byte
+  // 2) EAMR: REDUCED FORMAT FORMAT (LoRaWAN-compliant: max 44 byte)
+  //    |  Type  |  PGHAX  |  PGHAY  |  PGVA  |  Bracketed duration  |  Latitude  |  Longitude |
+  //      5 byte    5 byte   5 byte    5 byte          6 byte            9 byte       9 byte
+  // 3) EAMB: BASE FORMAT (max 26 byte)
+  //    |  Type  |  PGHAX  |  PGHAY  |  PGVA  |  Bracketed duration  |
+  //      5 byte    5 byte   5 byte    5 byte          6 byte
+  //
+  // Payload format of an EDP LoRa packet (max 27 byte):
+  // |  Type  |  TEMPERATURE  |  HUMIDITY  |  PRESSURE  |
+  //   5 byte      7 byte         7 byte       8 byte
+  //
+  if ((data.startsWith("#EAM") || data.startsWith("#EDP")) && isMqttConnected == true) {
+    uint8_t field;
+    uint8_t numMaxFields = 10;
+    startIndex = 1;
+    stopIndex = 5;
 
-  // Check if the received LoRa packet contains an alert message
-  if (data.startsWith("#ALERT!")) {
-    // send alert to Adafruit IO:
-    if ((data.indexOf("#PGHAX=") != -1) && (data.indexOf("#PGHAY=") != -1) && (data.indexOf("#PGVA=") != -1)) {
-      startIndex = data.indexOf("#PGHAX=") + String("#PGHAX=").length();
-      stopIndex = data.indexOf("#PGHAY=");
-      tempData = data.substring(startIndex, stopIndex);
-    #if SERIAL_DEBUG == 1
-      SerialPort.print("PGHAX = "); SerialPort.println(tempData);
-    #endif
-      pghaxFeed.publish(tempData.toInt());
+    String packetType = data.substring(startIndex, stopIndex);
+    for (field = 2; field <= numMaxFields; field++) {
+      startIndex = data.indexOf("#", stopIndex) + 1;
+      stopIndex = data.indexOf("#", startIndex);
 
-      startIndex = stopIndex + String("#PGHAY=").length();
-      stopIndex = data.indexOf("#PGVA=");
-      tempData = data.substring(startIndex, stopIndex);
-    #if SERIAL_DEBUG == 1
-      SerialPort.print("PGHAY = "); SerialPort.println(tempData);
-    #endif
-      pghayFeed.publish(tempData.toInt());
+      if (startIndex != -1 && stopIndex != -1 && stopIndex > startIndex) {
+        fieldValue = data.substring(startIndex, stopIndex);
 
-      startIndex = stopIndex + String("#PGVA=").length();
-      stopIndex = data.indexOf("#DUR=");
-      tempData = data.substring(startIndex, stopIndex);
-    #if SERIAL_DEBUG == 1
-      SerialPort.print("PGVA = "); SerialPort.println(tempData);
-    #endif
-      pgvaFeed.publish(tempData.toInt());
-
-      // full format earthquake alert message
-      if (data.indexOf("#LAT=") != -1) {
-        startIndex = stopIndex + String("#DUR=").length();
-        stopIndex = data.indexOf("#LAT=");
-        tempData = data.substring(startIndex, stopIndex);
-      #if SERIAL_DEBUG == 1
-        SerialPort.print("DUR = "); SerialPort.println(tempData);
-      #endif
-        alertMsg += ("Duration: " + tempData + "\n");
-
-        startIndex = stopIndex + String("#LAT=").length();
-        stopIndex = data.indexOf("#LON=");
-        tempData = data.substring(startIndex, stopIndex);
-      #if SERIAL_DEBUG == 1
-        SerialPort.print("LAT = "); SerialPort.println(tempData);
-      #endif
-        alertMsg += ("Latitude: " + tempData + "\n");
-
-        startIndex = stopIndex + String("#LON=").length();
-        stopIndex = data.indexOf("#ALT=");
-        tempData = data.substring(startIndex, stopIndex);
-      #if SERIAL_DEBUG == 1
-        SerialPort.print("LON = "); SerialPort.println(tempData);
-      #endif
-        alertMsg += ("Longitude: " + tempData + "\n");
-
-        startIndex = stopIndex + String("#ALT=").length();
-        stopIndex = data.indexOf("#DATE=");
-        tempData = data.substring(startIndex, stopIndex);
-      #if SERIAL_DEBUG == 1
-        SerialPort.print("ALT = "); SerialPort.println(tempData);
-      #endif
-        alertMsg += ("Altitude: " + tempData + "\n");
-
-        startIndex = stopIndex + String("#DATE=").length();
-        stopIndex = data.indexOf("#TIME=");
-        tempData = data.substring(startIndex, stopIndex);
-      #if SERIAL_DEBUG == 1
-        SerialPort.print("DATE = "); SerialPort.println(tempData);
-      #endif
-        alertMsg += ("Date: " + tempData + "\n");
-
-        startIndex = stopIndex + String("#TIME=").length();
-        // stopIndex = data.length();
-        // tempData = data.substring(startIndex, stopIndex);
-        tempData = data.substring(startIndex);
-      #if SERIAL_DEBUG == 1
-        SerialPort.print("TIME = "); SerialPort.println(tempData);
-      #endif      
-        alertMsg += ("Time: " + tempData);
+        if (packetType.startsWith("EAM")) {
+          switch (field) {
+            case PGHAX:
+              pghaxFeed.publish(fieldValue.toInt());
+              alertMsg = ("EAM - PGHAX: " + fieldValue + ", ");
+            #if SERIAL_DEBUG == 1
+              SerialPort.print("PGHAX: "); SerialPort.println(fieldValue);
+            #endif
+              break;
+            case PGHAY:
+              pghayFeed.publish(fieldValue.toInt());
+              alertMsg += ("PGHAY: " + fieldValue + ", ");
+            #if SERIAL_DEBUG == 1
+              SerialPort.print("PGHAY: "); SerialPort.println(fieldValue);
+            #endif
+              break;
+            case PGVA:
+              pgvaFeed.publish(fieldValue.toInt());
+              alertMsg += ("PGVA: " + fieldValue + ", ");
+            #if SERIAL_DEBUG == 1
+              SerialPort.print("PGVA: "); SerialPort.println(fieldValue);
+            #endif
+              break;
+            case DURATION:
+              alertMsg += ("Duration: " + fieldValue + "\n");
+            #if SERIAL_DEBUG == 1
+              SerialPort.print("Duration: "); SerialPort.println(fieldValue);
+            #endif
+              break;
+            case LATITUDE:
+              if (packetType.equals("EAMB"))
+                break;
+              alertMsg += ("LAT: " + fieldValue + ", ");
+            #if SERIAL_DEBUG == 1
+              SerialPort.print("Latitude: "); SerialPort.println(fieldValue);
+            #endif
+              break;
+            case LONGITUDE:
+              if (packetType.equals("EAMB"))
+                break;
+              alertMsg += ("LON: " + fieldValue + ", ");
+            #if SERIAL_DEBUG == 1
+              SerialPort.print("Longitude: "); SerialPort.println(fieldValue);
+            #endif
+              break;
+            case ALTITUDE:
+              if (packetType.equals("EAMR") || packetType.equals("EAMB"))
+                break;
+              alertMsg += ("ALT: " + fieldValue + "\n");
+            #if SERIAL_DEBUG == 1
+              SerialPort.print("Altitude: "); SerialPort.println(fieldValue);
+            #endif
+              break;
+            case DATE:
+              if (packetType.equals("EAMR") || packetType.equals("EAMB"))
+                break;
+              alertMsg += ("DATE: " + fieldValue + ", ");
+            #if SERIAL_DEBUG == 1
+              SerialPort.print("Date: "); SerialPort.println(fieldValue);
+            #endif
+              break;
+            case TIME:
+              if (packetType.equals("EAMR") || packetType.equals("EAMB"))
+                break;
+              alertMsg += ("TIME: " + fieldValue + "\n\n");
+            #if SERIAL_DEBUG == 1
+              SerialPort.print("Time: "); SerialPort.println(fieldValue);
+            #endif
+              break;
+            default:
+              SerialPort.print("Unknown field: ");
+              SerialPort.println(fieldValue);
+              break;
+          }
+        }
+        else if (packetType.equals("EDPB")) {
+          switch (field) {
+            case TEMP:
+              tempFeed.publish(fieldValue.toFloat());
+            #if SERIAL_DEBUG == 1
+              SerialPort.print("Temperature: "); SerialPort.println(fieldValue);
+            #endif
+              break;
+            case HUM:
+              humFeed.publish(fieldValue.toFloat());
+            #if SERIAL_DEBUG == 1
+              SerialPort.print("Humidity: "); SerialPort.println(fieldValue);
+            #endif
+              break;
+            case PRESS:
+              pressFeed.publish(fieldValue.toFloat());
+            #if SERIAL_DEBUG == 1
+              SerialPort.print("Pressure: "); SerialPort.println(fieldValue);
+            #endif
+              break;
+            default:
+              SerialPort.print("Unknown field: ");
+              SerialPort.println(fieldValue);
+              break;
+          }
+        }
+        else {
+        #if SERIAL_DEBUG == 1
+          SerialPort.print("Invalid packet type: ");
+          SerialPort.println(packetType);
+        #endif
+        }
       }
-      // reduced format earthquake alert message
       else {
-        startIndex = stopIndex + String("#DUR=").length();
-        tempData = data.substring(startIndex);
-      #if SERIAL_DEBUG == 1
-        SerialPort.print("DUR = "); SerialPort.println(tempData);
-      #endif
-        alertMsg += ("Duration: " + tempData + "\n\n");
+        break;
       }
-
-      #if SERIAL_DEBUG == 1
-      SerialPort.print("Earthquake Alert Message: "); SerialPort.println(alertMsg);
-      #endif
-      alertFeed.publish(alertMsg.c_str());
-
-      msgIdACK = msgID;
-      nodeAddress = senderAddr;
-      sendACK = true;
     }
+
+    if (packetType.equals("EAMR") || packetType.equals("EAMB")) {
+      if (updateNTP() == UDP_STATUS_OK) {
+        alertMsg += ("TIMESTAMP: " + NTPTimestamp + "\n\n");
+      }
+    }
+
+    if (packetType.startsWith("EAM")) {
+    #if SERIAL_DEBUG == 1
+      SerialPort.println("Alert Message:");
+      SerialPort.print(alertMsg);
+    #endif
+      alertFeed.publish(alertMsg.c_str());
+    }
+
+    msgIdACK = msgID;
+    nodeAddress = senderAddr;
+    sendACK = true;
   }
-  // message containing environmental data
-  else if (data.startsWith("#TEMP=") && (data.indexOf("#HUM=") != -1) && (data.indexOf("#PRESS=") != -1)) {
-    startIndex = data.indexOf("#TEMP=") + String("#TEMP=").length();
-    stopIndex = data.indexOf("#HUM=");
-    tempData = data.substring(startIndex, stopIndex);
-  #if SERIAL_DEBUG == 1
-    SerialPort.print("TEMP = "); SerialPort.println(tempData);
-  #endif
-    tempFeed.publish(tempData.toFloat());
-
-    startIndex = stopIndex + String("#HUM=").length();
-    stopIndex = data.indexOf("#PRESS=");
-    tempData = data.substring(startIndex, stopIndex);
-  #if SERIAL_DEBUG == 1
-    SerialPort.print("HUM = "); SerialPort.println(tempData);
-  #endif
-    humFeed.publish(tempData.toFloat());
-
-    startIndex = stopIndex + String("#PRESS=").length();
-    tempData = data.substring(startIndex);
-  #if SERIAL_DEBUG == 1
-    SerialPort.print("PRESS = "); SerialPort.println(tempData);
-  #endif
-    pressFeed.publish(tempData.toFloat());
+  else {
+    String errorMsg = "LoRa Error: Invalid type of packet received";
+    SerialPort.println(errorMsg);
+    alertFeed.publish(errorMsg.c_str());
   }
 
   SerialPort.println("------------------------------------------");
@@ -485,30 +571,39 @@ void parseLoRaPacket(int packetSize) {
 
 // Function to connect and reconnect as necessary to the MQTT server (Adafruit IO MQTT Broker).
 // Should be called in the loop function and it will take care if connecting.
-void MQTT_connect() {
-  int8_t ret;
+bool MQTT_connect(void) {
+  int8_t mqttStatus;
+  bool mqttFailedConnecting = false;
 
   // Stop if already connected.
   if (mqtt.connected()) {
-    return;
+    return true;
   }
 
   SerialPort.println("Connecting to Adafruit IO through MQTT...");
 
   uint8_t retries = 3;
   // connect will return 0 for connected
-  while ((ret = mqtt.connect()) != 0) {
-    SerialPort.println(mqtt.connectErrorString(ret));
+  while ((mqttStatus = mqtt.connect()) != 0) {
+    SerialPort.println(mqtt.connectErrorString(mqttStatus));
     SerialPort.println("Retrying MQTT connection in 5 seconds...");
     mqtt.disconnect();
     delay(5000);  // wait 5 seconds
     retries--;
     if (retries == 0) {
       SerialPort.println("Failed connecting to Adafruit IO through MQTT");
-      // while (true);
+      mqttFailedConnecting = true;
+      break;
     }
   }
-  SerialPort.println("Connected!");
+
+  if (mqttFailedConnecting == false) {
+    SerialPort.println("Connected!");
+    return true;
+  }
+  else {
+    return false;
+  }
 }
 
 void printEncryptionType(int thisType) {
@@ -529,10 +624,10 @@ void printEncryptionType(int thisType) {
     case ES_WIFI_SEC_WPA_WPA2:
       SerialPort.println("WPA_WPA2");
       break;
-     case ES_WIFI_SEC_WPA2_TKIP:
+    case ES_WIFI_SEC_WPA2_TKIP:
       SerialPort.println("WPA_TKIP");
       break;
-     case ES_WIFI_SEC_UNKNOWN:
+    case ES_WIFI_SEC_UNKNOWN:
       SerialPort.println("UNKNOW");
       break;
   }
@@ -570,7 +665,7 @@ void printWifiStatus() {
   for (uint8_t i = 0; i < 6; i++) {
     if (macAddr[i] < 0x10) {
       SerialPort.print("0");
-    } 
+    }
     SerialPort.print(macAddr[i], HEX);
     if (i != 5) {
       SerialPort.print(":");
@@ -599,4 +694,120 @@ void printWifiStatus() {
   // print encryption type:
   SerialPort.print("Encryption type: ");
   printEncryptionType(WiFi.encryptionType());
+}
+
+// send an NTP request to the time server at the given address
+byte sendNTPpacket(IPAddress &serverIP) {
+  // set all bytes in the buffer to 0
+  memset(packetBuffer, 0, NTP_PACKET_SIZE);
+  byte ret;
+
+  // Initialize values needed to form NTP request
+  // (see URL above for details on the packets)
+  packetBuffer[0] = 0b11100011;   // LI, Version, Mode
+  packetBuffer[1] = 0;            // Stratum, or type of clock
+  packetBuffer[2] = 6;            // Polling Interval
+  packetBuffer[3] = 0xEC;         // Peer Clock Precision
+  // 8 bytes of zero for Root Delay & Root Dispersion
+  packetBuffer[12]  = 49;
+  packetBuffer[13]  = 0x4E;
+  packetBuffer[14]  = 49;
+  packetBuffer[15]  = 52;
+
+  // Send a packet requesting a timestamp.
+  // NTP requests are to port 123
+  if (Udp.beginPacket(serverIP, 123) == 0) {
+    SerialPort.print("Failed to start UDP connection to NTP Server ");
+    SerialPort.println(serverIP);
+    return UDP_CONNECTION_ERROR;
+  }
+
+  size_t pktSentLen = Udp.write(packetBuffer, NTP_PACKET_SIZE);
+  if (pktSentLen == 0) {
+    SerialPort.println("Failed to send the UDP packet.");
+    return UDP_WRITE_ERROR;
+  }
+
+#if SERIAL_DEBUG == 1
+  SerialPort.print("NTP packet length: ");
+  SerialPort.println(pktSentLen);
+#endif
+
+  return UDP_STATUS_OK;
+}
+
+String getTimestamp(unsigned long epoch, unsigned long timeOffset) {
+  time_t rawtime = epoch + timeOffset;
+  struct tm * ti;
+  ti = localtime(&rawtime);
+
+  uint16_t year = ti->tm_year + 1900;
+  String yearStr = String(year);
+
+  uint8_t month = ti->tm_mon + 1;
+  String monthStr = month < 10 ? "0" + String(month) : String(month);
+
+  uint8_t day = ti->tm_mday;
+  String dayStr = day < 10 ? "0" + String(day) : String(day);
+
+  uint8_t hours = ti->tm_hour;
+  String hoursStr = hours < 10 ? "0" + String(hours) : String(hours);
+
+  uint8_t minutes = ti->tm_min;
+  String minuteStr = minutes < 10 ? "0" + String(minutes) : String(minutes);
+
+  uint8_t seconds = ti->tm_sec;
+  String secondStr = seconds < 10 ? "0" + String(seconds) : String(seconds);
+
+  return (dayStr + "/" + monthStr + "/" + yearStr + " " +
+          hoursStr + ":" + minuteStr + ":" + secondStr);
+}
+
+byte updateNTP(void) {
+  // start a new NTP packet
+  
+  SerialPort.println("Sending a new NTP request...");
+  byte connectionStatus = sendNTPpacket(timeServer);
+
+  if (connectionStatus == UDP_STATUS_OK) {
+    // wait to see if a reply is available
+    delay(1000);
+
+    // read the packet into the buffer
+    int packetSize = Udp.read(packetBuffer, NTP_PACKET_SIZE);
+    
+    if (packetSize > 0) {
+      SerialPort.println("New NTP packet received");
+
+      // the timestamp starts at byte 40 of the received packet and is four bytes,
+      // or two words, long. First, esxtract the two words:
+      unsigned long highWord = word(packetBuffer[40], packetBuffer[41]);
+      unsigned long lowWord = word(packetBuffer[42], packetBuffer[43]);
+      // combine the four bytes (two words) into a long integer
+      // this is NTP time (seconds since Jan 1 1900):
+      unsigned long secsSince1900 = highWord << 16 | lowWord;
+      // now convert NTP time into everyday time subtracting seventy years:
+      epoch = secsSince1900 - seventyYears;
+
+    #if SERIAL_DEBUG == 1
+      SerialPort.print("Seconds since Jan 1 1900: ");
+      SerialPort.println(secsSince1900);
+      // print Unix time:
+      SerialPort.print("Unix time: ");
+      SerialPort.println(epoch);
+    #endif
+      // print time and date
+      NTPTimestamp = getTimestamp(epoch, 3600);
+      SerialPort.print("NTP Timestamp: ");
+      SerialPort.println(NTPTimestamp);
+
+      Udp.stop();
+      delay(500);
+    }
+    else {
+      return UDP_READ_ERROR;
+    }
+  }
+  
+  return connectionStatus;
 }
