@@ -1,6 +1,8 @@
 # QuakeSense
 
-QuakeSense is an IoT project that aims to "sense" and monitor earthquakes through a LoRa network.
+The QuakeSense project is an open-source earthquake and environmental monitoring system consisting of a low power and low cost IoT network made of energy-autonomous sensor nodes that are powered through an energy harvesting system and are connected to a gateway in a star topology.  
+The project is based on two emerging IoT technologies, MQTT and LoRa, one of the most promising Low Power Wide Area Networks (LPWAN) technologies that provides a good compromise between coverage, current consumption, payload length, bandwidth, and data rate.  
+The collected data are offered to users thanks to a dedicated web-based interface, thus allowing real-time monitoring of both seismic events and environmental parameters.
 
 ## Project implmentation
 
@@ -10,9 +12,10 @@ The main components of the QuakeSense project are: one or more sensor nodes, a s
 
 #### Sensor Nodes
 
-Each sensor node has been made with the following components:
-* [STM32 Nucleo F401RE](http://www.st.com/resource/en/user_manual/dm00105823.pdf) development board based on the STM32F401RE (Datasheet: [http://www.st.com/resource/en/datasheet/stm32f401re.pdf](http://www.st.com/resource/en/datasheet/stm32f401re.pdf))
+Each sensor node consists of the following components:
+* [STM32 Nucleo F401RE](http://www.st.com/resource/en/user_manual/dm00105823.pdf) development board based on the STM32F401RE
   84 MHz ARM Cortex-M4 MCU with a Floating Point Unit (FPU), 512 kB of Flash memory and 96 kB of SRAM
+    * Datasheet of STM32F401RE MCU: [http://www.st.com/resource/en/datasheet/stm32f401re.pdf](http://www.st.com/resource/en/datasheet/stm32f401re.pdf))
 * [X-NUCLEO-IKS01A2](http://www.st.com/resource/en/data_brief/x-nucleo-iks01a2.pdf) motion MEMS and environmental sensor expansion board including:
   * LSM6DSL: MEMS 3D accelerometer and 3D gyroscope
     * Datasheet: [http://www.st.com/resource/en/datasheet/lsm6dsl.pdf](http://www.st.com/resource/en/datasheet/lsm6dsl.pdf)
@@ -25,7 +28,7 @@ Each sensor node has been made with the following components:
 * [Dragino LoRa/GPS Shield](http://wiki.dragino.com/index.php?title=Lora/GPS_Shield) including:
   * RFM95W 137 MHz to 1020 MHz low-power, long-range LoRa RF transceiver
     * Datasheet: [http://www.hoperf.com/upload/rf/RFM95_96_97_98W.pdf](http://www.hoperf.com/upload/rf/RFM95_96_97_98W.pdf)
-  * Quectel L80 GPS module based on the Mediatek MTK MT3339
+  * Quectel L80 GPS module based on the Mediatek MTK MT3339 All-in-One GPS system on a chip (SoC)
     * Datasheet: [https://www.quectel.com/UploadImage/Downlad/L80_Hardware_Design_V1.1.pdf](https://www.quectel.com/UploadImage/Downlad/L80_Hardware_Design_V1.1.pdf)
 * [Seed Studio Solar Charger Shield v2.2](http://wiki.seeed.cc/Solar_Charger_Shield_V2.2) to which are connected:
   * the Adafruit 2000 mAh LiPo battery
@@ -33,36 +36,14 @@ Each sensor node has been made with the following components:
   * the Seeed Studio 1.5 W solar panel
     * Datasheet: [http://wiki.seeedstudio.com/1.5W_Solar_Panel_81x137/](http://wiki.seeedstudio.com/1.5W_Solar_Panel_81x137/)
 
-When a seismic event occurs, the sensor node reads the accelerometers samples coming from the LSM6DSL
-to calculate some of the main parameters that characterize the strong-motion activity:
-* Bracketed duration: defined as the time interval between the first and last exceeding of 
-  an acceleration threshold, usually set between 0.05 g and 0.1 g.
-* Peak Ground Acceleration (PGA): the maximum amplitude of the acceleration in absolute value
-  obtained by considering the three horizontal components of acceleration (x, y and z).
-
-The samples reading starts when the LSM6DSL generates an interrupt associated to the "wake up" event of
-the LSM6DLS accelerometer and when at least one of the 3 components of acceleration exceeds the associated threshold
-set at 50 mg for for the horizontal acceleration components and 1120 mg for the vertical component.
-A sensor node can read a maximum of 4096 samples and the time window is 60 seconds.
-To locate and date the seismic event, the sensor node reads and parses the data coming from the 
-Quectel L80 GPS module to get latitude, longitude, altitude, date and time.
-These values are transmitted together with the earthquake parameters to a LoRa gateway
-using the RFM95W LoRa transceiver.
-Each sensor node is also able to monitor some environmental parameters, in fact it uses periodically
-the HTS221 and LPS22HB environmental sensors to get temperature, relative humidity and pressure.
-These values are also sent periodically to the gateway using the LoRa protocol.
-To optimize lifetime of the LiPo battery, the sensor node is by default in Low-Power mode.
-In this operating mode, the STM32F401RE MCU is put in deep sleep low-power mode
-(STM32 Stop mode: the MCU is stopped and the clocks are switched off but SRAM and registers content are kept),
-the power mode choosed for the RFM95W LoRa module is the sleep mode, instead the Quectel L80 GPS
-uses the AlwaysLocate mode which is an intelligent power saving mode that allows the GPS module
-to adaptively and automatically adjust the full on time environmental and motion conditions.
-The sensor node wakes up from Low-Power mode using interrupts generated by the LSM6DSL accelerometer when
-a seismic event occurs or using RTC when the sensor node has to send environmental data to the gateway.
+By default, each sensor node runs in Low-Power mode. In this configuration, the STM32 MCU runs in Stop mode (the MCU is stopped and the clocks are switched off, but SRAM and registers content are kept), the GPS module is in AlwaysLocate mode (an intelligent power saving mode that allows the GPS module to adaptively and automatically adjust the full on time according to the environmental and motion conditions), while the LoRa module in Standby mode for the maximum energy saving.  
+When a seismic event occurs, the accelerometer generates an interrupt associated to the wake-up event and the node starts running in Run mode, which results in waking up the STM32 MCU and the GPS module in Full On mode, while the LoRa module is put in Transmit mode. The wake-up event happens if at least one of the 3 acceleration components exceeds the reference threshold (50 mg for the horizontal components, 1120 mg for the vertical one).  
+Once in Run mode, the sensor node starts reading and recording acceleration data to compute the bracketed duration, defined as the time interval between the first and last exceeding of the acceleration threshold, and the 3 components of the Peak Ground Acceleration (PGA), defined as the maximum amplitude of acceleration in absolute value. The computed strong-motion parameters are also geo-referenced thanks to the GPS module, so that latitude, longitude, altitude, date and time paramters are added to the LoRa packet that is finally sent to the gateway.  
+The baseline behavior of the node foresees a periodical (by default, every 15 minutes) monitoring of the environmental parameters (temperature, relative humidity and pressure) through the LPS22HB and HTS221 MEMS sensors.
 
 #### Gateway
 
-The single-channel LoRa gateway has been made using the following components:
+The single-channel LoRa gateway consists of the following components:
 
 * [B-L475E-IOT01A2 STM32L4 Discovery kit](http://www.st.com/resource/en/user_manual/dm00347848.pdf) featuring:
   * STM32L475VG: Ultra-low-power ARM Cortex-M4 MCU which includes a Floating Point Unit (FPU), 1 MB of Flash memory and 128 kB of SRAM
@@ -71,7 +52,7 @@ The single-channel LoRa gateway has been made using the following components:
     * Datasheet: [http://www.inventeksys.com/wp-content/uploads/ISM43362_M3G_L44_Functional_Spec](http://www.inventeksys.com/wp-content/uploads/ISM43362_M3G_L44_Functional_Spec)
   * SPSGRF-868: Sub-GHz (868 Mhz) low-power RF module
     * Datasheet: [http://www.st.com/resource/en/datasheet/spsgrf.pdf](http://www.st.com/resource/en/datasheet/spsgrf.pdf)
-  * SPBTLE-RF: Bluetooth V4.1 module
+  * SPBTLE-RF: Bluetooth v4.1 module
     * Datasheet: [http://www.st.com/resource/en/datasheet/spbtle-rf.pdf](http://www.st.com/resource/en/datasheet/spbtle-rf.pdf)
   * M24SR64-Y: dynamic NFC tag including also a printed NFC antenna
     * Datasheet: [http://www.st.com/resource/en/datasheet/m24sr64-y.pdf](http://www.st.com/resource/en/datasheet/m24sr64-y.pdf)
@@ -87,16 +68,14 @@ The single-channel LoRa gateway has been made using the following components:
   * a RFM95W low-power, long-range LoRa RF transceiver based on SX1276
     * Datasheet: [http://www.hoperf.com/upload/rf/RFM95_96_97_98W.pdf](http://www.hoperf.com/upload/rf/RFM95_96_97_98W.pdf)
 
-The gateway elaborates LoRa messages received from sensor nodes and forward their data to Adafruit IO platform using the MQTT protocol.
+The gateway is functionally in charge of receiving packets sent by sensor nodes, parsing the encapsulated values and
+forwarding them to the Adafruit IO platform via the MQTT protocol.  
+The gateway also deals with packets integrity: every time a new packet is received, the gateway computes the checksum and compares it with the one within the received message. In case of a mismatch, the packet is dropped and an error message is sent to the Adafruit IO platform.
 
 #### Adafruit IO
 
-The Adafruit IO platform is used to collect, process and visualize in real-time environmental data
-and strong-motion paremeters related to seismic events.
-The User Interface (UI) consists of a dashboard which includes some widget represented by graphs
-and tools to create an interactive and simple view that shows the environmental parameters
-(temperature, humidity and pressure) and how the time trend of the three components of 
-peak ground acceleration.
+The Adafruit IO platform is used to collect, process and visualize in real-time environmental data and strong-motion parameters related to seismic events.  
+The user interface (UI) consists of a dashboard, which includes some widgets implemented through line graphs, gauges and other blocks to show the value of environmental parameters and the time trend of the three components of peak ground acceleration.
 
 ### Software components
 
@@ -112,11 +91,12 @@ The software libraries and frameworks used to implement the QuakeSense project a
 8. LPS22HB library: [https://github.com/stm32duino/LPS22HB](https://github.com/stm32duino/LPS22HB)
 
 ## Authors
-Biagio Montaruli - <biagio.hkr@gmail.com>
+Biagio Montaruli - <b.montaruli@studenti.poliba.it>
 
 ## License
 This software is licensed under the terms of the GNU GPLv3.
 See the LICENSE.md file for more details.
 
 ## Acknowledgments
-This project has been developed for the Internet of Things course led by prof. Luigi Alfredo Grieco at [Polytechnic University of Bari (PoliBa)](http://www.poliba.it/). And a special thanks to all researches and people of the [Telematics Lab](https://telematics.poliba.it/index.php?lang=en) (@telematics-dev) who helped me during the development of this project.
+This project has been developed for my undergraduate thesis in Internet of Things at [Polytechnic University of Bari (PoliBa)](http://www.poliba.it/).  
+I wish to say a special thanks to my professor and supervisor Luigi Alfredo Grieco, and to all researchers and people of the [Telematics' Lab](https://telematics.poliba.it/index.php?lang=en) (@telematics-dev) who helped me during the development of this project.
